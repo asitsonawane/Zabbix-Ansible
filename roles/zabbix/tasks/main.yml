@@ -1,0 +1,80 @@
+- name: Install required packages
+  apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - wget
+    - gnupg
+    - mysql-server
+    - zabbix-server-mysql
+    - zabbix-frontend-php
+    - zabbix-apache-conf
+    - zabbix-sql-scripts
+    - zabbix-agent
+
+- name: Add Zabbix repository
+  shell: >
+    wget -qO /tmp/zabbix-release.deb https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/zabbix-release_latest_7.0+ubuntu22.04_all.deb
+    && dpkg -i /tmp/zabbix-release.deb
+  args:
+    creates: /etc/apt/sources.list.d/zabbix.list
+  register: add_repo
+
+- name: Update apt cache if repo added
+  apt:
+    update_cache: yes
+  when: add_repo.changed
+
+- name: Start and enable MySQL service
+  systemd:
+    name: mysql
+    state: started
+    enabled: yes
+
+- name: Configure MySQL database
+  mysql_db:
+    name: zabbix
+    encoding: utf8mb4
+    collation: utf8mb4_bin
+    state: present
+  mysql_user:
+    name: zabbix
+    password: "{{ zabbix_db_password }}"
+    priv: 'zabbix.*:ALL'
+    host: localhost
+    state: present
+
+- name: Import Zabbix schema
+  command: >
+    zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz |
+    mysql --default-character-set=utf8mb4 -uzabbix -p{{ zabbix_db_password }}
+  args:
+    creates: /var/lib/mysql/zabbix/tablespace.ibd
+
+- name: Configure Zabbix server
+  template:
+    src: zabbix_server.conf.j2
+    dest: /etc/zabbix/zabbix_server.conf
+
+- name: Copy custom script
+  copy:
+    src: disk_free.sh
+    dest: /etc/zabbix/disk_free.sh
+    mode: '0755'
+
+- name: Configure Zabbix agent
+  lineinfile:
+    path: /etc/zabbix/zabbix_agentd.conf
+    regexp: '^# UserParameter='
+    line: 'UserParameter=custom.disk.usage_over_20percent,/etc/zabbix/disk_free.sh'
+
+- name: Restart services
+  systemd:
+    name: "{{ item }}"
+    state: restarted
+  loop:
+    - zabbix-server
+    - zabbix-agent
+    - apache2
+  notify:
+    - Verify services

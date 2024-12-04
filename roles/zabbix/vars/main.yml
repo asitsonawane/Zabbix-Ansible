@@ -1,0 +1,4 @@
+mysql_root_password: root_password
+zabbix_db_password: zabbix_password
+zabbix_server_name: BrightEdge
+zabbix_timezone: Asia/Kolkata
